@@ -30,35 +30,6 @@ Optional extras:
 pip install -e ".[dev,openai,anthropic,playwright]"
 ```
 
-## Local Verification
-
-Offline checks:
-
-```bash
-make install-dev
-make test
-```
-
-Real dry-run against a live URL:
-
-```bash
-make dry-run
-```
-
-Real LLM end-to-end verification:
-
-```bash
-LLM_API_KEY=sk-xxx make e2e-real
-LLM_API_KEY=sk-xxx make e2e-manual
-```
-
-Full local validation script:
-
-```bash
-./scripts/verify_local.sh
-LLM_API_KEY=sk-xxx ./scripts/verify_local.sh --all
-```
-
 ## Usage
 
 ```bash
