@@ -194,9 +194,8 @@ def _build_output_path(
 @click.option(
     "--output",
     type=click.Path(path_type=Path, dir_okay=False),
-    default="output.md",
-    show_default=True,
-    help="Output markdown file path.",
+    default=None,
+    help="Output markdown file path. Defaults to output/<slug>.md",
 )
 @click.option(
     "--output-dir",
@@ -326,6 +325,14 @@ def main(
 
     if len(urls) > 1 and output_dir is not None:
         raise click.ClickException("多个 URL 现在会合并到一个 Markdown 文件中，请使用 '--output' 而不是 '--output-dir'。")
+
+    # Default output to output/ directory if not specified
+    if output is None:
+        output_dir_path = Path("output")
+        if len(urls) == 1:
+            output = output_dir_path / _slugify_url(urls[0], 0)
+        else:
+            output = output_dir_path / "merged.md"
 
     try:
         pipeline = WebInfo2MDPipeline()
