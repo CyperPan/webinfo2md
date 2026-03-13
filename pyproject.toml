@@ -37,6 +37,12 @@ anthropic = [
 deepseek = [
   "openai>=1.66.3",
 ]
+kimi = [
+  "openai>=1.66.3",
+]
+gemini = [
+  "openai>=1.66.3",
+]
 dev = [
   "pytest>=8.3.5",
   "pytest-asyncio>=0.25.3",

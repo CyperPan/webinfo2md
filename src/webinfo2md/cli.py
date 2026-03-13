@@ -8,20 +8,103 @@ from urllib.parse import urlparse
 import click
 from click.core import ParameterSource
 
+from webinfo2md.llm.factory import create_client
 from webinfo2md.pipeline import WebInfo2MDPipeline
 from webinfo2md.prompts.templates import TEMPLATES
 from webinfo2md.utils.config import AppConfig
+from webinfo2md.utils.config import DEFAULT_MODELS
 from webinfo2md.utils.config import PipelineConfig
 from webinfo2md.utils.config import load_app_config
 from webinfo2md.utils.config import merge_playwright_config
 from webinfo2md.utils.config import model_to_non_null_dict
 from webinfo2md.utils.config import resolve_api_key
+from webinfo2md.utils.config import SUPPORTED_PROVIDERS
 
 
 def _prompt_if_missing(value: str | None, prompt_text: str, *, hide_input: bool = False) -> str:
     if value:
         return value
     return click.prompt(prompt_text, hide_input=hide_input)
+
+
+def _split_url_text(raw: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[\s,]+", raw.strip()) if item.strip()]
+
+
+def _prompt_for_urls(existing_urls: list[str]) -> list[str]:
+    if existing_urls:
+        return existing_urls
+    raw = click.prompt(
+        "网站 URL（可一次输入多个，使用空格或逗号分隔）",
+        type=str,
+    )
+    urls = _split_url_text(raw)
+    if not urls:
+        raise click.ClickException("至少需要输入一个网站 URL。")
+    return urls
+
+
+def _prompt_for_prompt(prompt: str | None) -> str:
+    if prompt:
+        return prompt
+    return click.prompt(
+        "希望获取并整理什么信息",
+        default="提取所有面试问题，整理为八股文格式，补充标准答案",
+        show_default=True,
+    )
+
+
+def _prompt_for_provider(current: str) -> str:
+    """Interactively ask the user to choose an LLM provider."""
+    provider_list = list(SUPPORTED_PROVIDERS)
+    click.echo("\n可选的 LLM 提供商:")
+    for i, p in enumerate(provider_list, 1):
+        default_model = DEFAULT_MODELS.get(p, "")
+        marker = " (当前)" if p == current else ""
+        click.echo(f"  {i}. {p} (默认模型: {default_model}){marker}")
+    choice = click.prompt(
+        "请选择提供商编号或名称",
+        default=current,
+        show_default=True,
+    )
+    # Accept number or name
+    if choice.isdigit():
+        idx = int(choice) - 1
+        if 0 <= idx < len(provider_list):
+            return provider_list[idx]
+    if choice in provider_list:
+        return choice
+    click.echo(f"未识别的选项 '{choice}'，使用默认: {current}")
+    return current
+
+
+def _prompt_for_model(provider: str, current: str | None) -> str | None:
+    """Interactively ask the user to choose or confirm a model."""
+    default = current or DEFAULT_MODELS.get(provider, "")
+    model = click.prompt(
+        f"模型名称",
+        default=default,
+        show_default=True,
+    )
+    return model if model else default
+
+
+def _validate_api_key(provider: str, api_key: str, model: str | None) -> bool:
+    """Make a lightweight test call to validate the API key and model."""
+    try:
+        client = create_client(provider, api_key, model)
+        return asyncio.run(client.validate())
+    except Exception:
+        return False
+
+
+def _resolve_or_prompt_api_key(provider: str, api_key: str | None, *, dry_run: bool) -> str | None:
+    if dry_run:
+        return api_key
+    try:
+        return resolve_api_key(provider, api_key)
+    except ValueError:
+        return click.prompt(f"{provider.upper()} API Key", hide_input=True)
 
 
 def _resolve_option(
@@ -94,7 +177,7 @@ def _build_output_path(
 @click.option("--api-key", help="LLM API key. Falls back to environment variables.")
 @click.option(
     "--provider",
-    type=click.Choice(["openai", "anthropic", "deepseek"]),
+    type=click.Choice(list(SUPPORTED_PROVIDERS)),
     default="openai",
     show_default=True,
     help="LLM provider.",
@@ -122,11 +205,11 @@ def _build_output_path(
 )
 @click.option("--depth", default=0, show_default=True, type=int, help="Crawl depth.")
 @click.option("--pages", default=5, show_default=True, type=int, help="Max crawled pages.")
-@click.option("--chunk-size", default=6000, show_default=True, type=int, help="Approximate chunk token limit.")
+@click.option("--chunk-size", default=3000, show_default=True, type=int, help="Approximate chunk token limit.")
 @click.option(
     "--concurrency",
     "-j",
-    default=3,
+    default=5,
     show_default=True,
     type=int,
     help="Max concurrent LLM extraction requests.",
@@ -206,32 +289,43 @@ def main(
         screenshot_path=screenshot,
     )
 
-    if interactive:
-        if url_list:
-            raise click.ClickException("'--interactive' does not support '--url-list'.")
-        url = _prompt_if_missing(url, "URL")
-        if not api_key and not dry_run:
-            try:
-                api_key = resolve_api_key(provider, None)
-            except ValueError:
-                api_key = click.prompt("API Key", hide_input=True)
-        prompt = prompt or click.prompt(
-            "Prompt",
-            default="提取所有面试问题，整理为八股文格式，补充标准答案",
-            show_default=True,
-        )
-    urls = _load_urls(url, url_list)
-    if not urls:
-        raise click.ClickException("Missing option '--url' or '--url-list', or use '--interactive'.")
+    if interactive and url_list:
+        raise click.ClickException("'--interactive' does not support '--url-list'.")
 
-    explicit_output = ctx.get_parameter_source("output") not in {
-        None,
-        ParameterSource.DEFAULT,
-        ParameterSource.DEFAULT_MAP,
-    }
-    file_output = model_to_non_null_dict(file_config).get("output")
-    if len(urls) > 1 and (explicit_output or file_output is not None):
-        raise click.ClickException("Use '--output-dir' for batch mode; '--output' is only for a single URL.")
+    should_prompt_inputs = interactive or (not url and not url_list)
+    if should_prompt_inputs:
+        # Step 1: Choose provider and model interactively
+        if interactive:
+            provider = _prompt_for_provider(provider)
+            model = _prompt_for_model(provider, model)
+
+        # Step 2: Get API key
+        api_key = _resolve_or_prompt_api_key(provider, api_key, dry_run=dry_run)
+
+        # Step 3: Validate API key and model (unless dry-run)
+        if not dry_run and api_key:
+            click.echo("正在验证 API Key 和模型...")
+            if _validate_api_key(provider, api_key, model):
+                click.echo("✓ 验证通过")
+            else:
+                click.echo("✗ API Key 或模型验证失败，请检查后重试。")
+                if not click.confirm("是否仍要继续？", default=False):
+                    raise click.ClickException("API Key 验证失败，已退出。")
+
+        # Step 4: Get URLs
+        urls = _prompt_for_urls(_load_urls(url, url_list))
+    else:
+        urls = _load_urls(url, url_list)
+        if not urls:
+            raise click.ClickException("Missing option '--url' or '--url-list', or use '--interactive'.")
+        api_key = _resolve_or_prompt_api_key(provider, api_key, dry_run=dry_run)
+
+    # Step 5: Get prompt (what info to extract)
+    if not dry_run:
+        prompt = _prompt_for_prompt(prompt)
+
+    if len(urls) > 1 and output_dir is not None:
+        raise click.ClickException("多个 URL 现在会合并到一个 Markdown 文件中，请使用 '--output' 而不是 '--output-dir'。")
 
     try:
         pipeline = WebInfo2MDPipeline()
@@ -250,42 +344,46 @@ def main(
             file_config.crawl_delay_max if file_config.crawl_delay_max is not None else 3.0
         )
 
-        for index, item_url in enumerate(urls):
-            run_config = PipelineConfig(
-                url=item_url,
-                api_key=api_key,
-                provider=provider,
-                model=model,
-                prompt=prompt,
-                template=template,
-                output=_build_output_path(item_url, index, len(urls), output, output_dir),
-                depth=depth,
-                pages=pages,
-                chunk_size=chunk_size,
-                max_concurrency=concurrency,
-                force_playwright=force_playwright,
-                verbose=verbose,
-                interactive=interactive,
-                dry_run=dry_run,
-                timeout=timeout,
-                min_content_length=min_content_length,
-                crawl_delay_min=crawl_delay_min,
-                crawl_delay_max=crawl_delay_max,
-                headers=headers,
-                cookies=cookies,
-                playwright=playwright_config,
+        resolved_output = (
+            _build_output_path(urls[0], 0, 1, output, output_dir)
+            if len(urls) == 1
+            else output
+        )
+        run_config = PipelineConfig(
+            url=urls[0],
+            api_key=api_key,
+            provider=provider,
+            model=model,
+            prompt=prompt,
+            template=template,
+            output=resolved_output,
+            depth=depth,
+            pages=pages,
+            chunk_size=chunk_size,
+            max_concurrency=concurrency,
+            force_playwright=force_playwright,
+            verbose=verbose,
+            interactive=interactive,
+            dry_run=dry_run,
+            timeout=timeout,
+            min_content_length=min_content_length,
+            crawl_delay_min=crawl_delay_min,
+            crawl_delay_max=crawl_delay_max,
+            headers=headers,
+            cookies=cookies,
+            playwright=playwright_config,
+        )
+        result = asyncio.run(pipeline.run(run_config, urls=urls))
+        if result.dry_run:
+            click.echo(
+                f"[dry-run] sources={result.source_count} pages={result.page_count} "
+                f"chunks={result.chunk_count} estimated_tokens={result.estimated_tokens} "
+                f"output={result.output_path}"
             )
-            result = asyncio.run(pipeline.run(run_config))
-            if result.dry_run:
-                click.echo(
-                    f"[dry-run] {result.url} pages={result.page_count} "
-                    f"chunks={result.chunk_count} estimated_tokens={result.estimated_tokens} "
-                    f"output={result.output_path}"
-                )
-            else:
-                click.echo(
-                    f"[done] {result.url} output={result.output_path} "
-                    f"questions={result.question_count} chunks={result.chunk_count}"
-                )
+        else:
+            click.echo(
+                f"[done] sources={result.source_count} output={result.output_path} "
+                f"questions={result.question_count} chunks={result.chunk_count}"
+            )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc

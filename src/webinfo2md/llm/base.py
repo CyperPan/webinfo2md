@@ -11,3 +11,14 @@ class BaseLLMClient(ABC):
     @abstractmethod
     async def complete(self, system: str, user: str) -> str:
         raise NotImplementedError
+
+    async def validate(self) -> bool:
+        """Send a minimal request to verify the API key and model are valid."""
+        try:
+            response = await self.complete(
+                system="Reply with exactly: ok",
+                user="ping",
+            )
+            return bool(response and response.strip())
+        except Exception:
+            return False

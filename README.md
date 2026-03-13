@@ -2,6 +2,8 @@
 
 `webinfo2md` is a CLI tool that fetches a webpage, cleans the content, asks an LLM to extract and organize key information, and writes a Markdown file.
 
+Supported providers: `openai`, `anthropic`, `claude`, `deepseek`, `kimi`, `gemini`.
+
 ## MVP scope
 
 This initial version implements:
@@ -35,12 +37,16 @@ pip install -e ".[dev,openai,anthropic,playwright]"
 ```bash
 webinfo2md \
   --url "https://example.com/interview-post" \
-  --api-key "$OPENAI_API_KEY" \
   --provider openai \
   --model gpt-4o-mini \
   --prompt "提取所有面试问题，整理为八股文格式，补充标准答案" \
   --output interview_qa.md
 ```
+
+If `--api-key` is omitted for a non-`--dry-run` command, the CLI will prompt for the provider's API key.
+If `--url` is omitted, the CLI will then prompt for one or more website URLs.
+If `--prompt` is omitted for a non-`--dry-run` command, the CLI will ask what information you want extracted and organized.
+If multiple URLs are provided, the tool now merges all extracted content into a single Markdown file and groups same-category questions together in that final document.
 
 Interactive mode:
 
@@ -89,8 +95,8 @@ Example:
 provider: openai
 model: gpt-4o-mini
 template: interview-general
-chunk_size: 6000
-max_concurrency: 4
+chunk_size: 3000
+max_concurrency: 5
 force_playwright: false
 pages: 5
 output_dir: ./results
@@ -113,7 +119,12 @@ Supported variables:
 - `LLM_API_KEY`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
+- `CLAUDE_API_KEY`
 - `DEEPSEEK_API_KEY`
+- `KIMI_API_KEY`
+- `MOONSHOT_API_KEY`
+- `GEMINI_API_KEY`
+- `GOOGLE_API_KEY`
 
 ## Notes
 

@@ -28,6 +28,7 @@ class OpenAIClient(BaseLLMClient):
         response = await client.chat.completions.create(
             model=self.model,
             temperature=0.2,
+            max_tokens=16384,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

@@ -23,7 +23,7 @@ class AnthropicClient(BaseLLMClient):
         response = await client.messages.create(
             model=self.model,
             system=system,
-            max_tokens=4096,
+            max_tokens=16384,
             messages=[{"role": "user", "content": user}],
         )
         return "".join(

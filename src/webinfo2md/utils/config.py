@@ -11,13 +11,26 @@ import yaml
 
 load_dotenv()
 
-ProviderName = Literal["openai", "anthropic", "deepseek"]
+SUPPORTED_PROVIDERS = ("openai", "anthropic", "claude", "deepseek", "kimi", "gemini")
+ProviderName = Literal["openai", "anthropic", "claude", "deepseek", "kimi", "gemini"]
 DEFAULT_CONFIG_PATH = Path.home() / ".webinfo2md" / "config.yaml"
 
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-7-sonnet-latest",
+    "claude": "claude-3-7-sonnet-latest",
     "deepseek": "deepseek-chat",
+    "kimi": "moonshot-v1-32k",
+    "gemini": "gemini-2.5-flash",
+}
+
+PROVIDER_ENV_MAP: dict[str, list[str]] = {
+    "openai": ["OPENAI_API_KEY", "LLM_API_KEY"],
+    "anthropic": ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "LLM_API_KEY"],
+    "claude": ["CLAUDE_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"],
+    "deepseek": ["DEEPSEEK_API_KEY", "LLM_API_KEY"],
+    "kimi": ["KIMI_API_KEY", "MOONSHOT_API_KEY", "LLM_API_KEY"],
+    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "LLM_API_KEY"],
 }
 
 
@@ -31,12 +44,7 @@ def resolve_api_key(provider: str, explicit_api_key: str | None) -> str:
     if explicit_api_key:
         return explicit_api_key
 
-    provider_env_map = {
-        "openai": ["OPENAI_API_KEY", "LLM_API_KEY"],
-        "anthropic": ["ANTHROPIC_API_KEY", "LLM_API_KEY"],
-        "deepseek": ["DEEPSEEK_API_KEY", "LLM_API_KEY"],
-    }
-    for env_name in provider_env_map[provider]:
+    for env_name in PROVIDER_ENV_MAP[provider]:
         value = os.getenv(env_name)
         if value:
             return value
@@ -59,8 +67,8 @@ class PipelineConfig(BaseModel):
     verbose: bool = False
     interactive: bool = False
     dry_run: bool = False
-    chunk_size: int = 6000
-    max_concurrency: int = 3
+    chunk_size: int = 3000
+    max_concurrency: int = 5
     force_playwright: bool = False
     timeout: float = 20.0
     min_content_length: int = 500
