@@ -78,6 +78,18 @@ class WebInfo2MDPipeline:
             if not pages:
                 raise RuntimeError(f"No pages were crawled from {source_url}")
 
+            # Warn about login walls
+            login_walled_pages = []
+            for page in pages:
+                if self._is_login_walled(page.text_content):
+                    login_walled_pages.append(page.url)
+            if login_walled_pages:
+                self._emit(
+                    f"⚠ 检测到登录墙，以下页面内容可能不完整 "
+                    f"(使用 --cookie-file 提供登录 cookie):\n"
+                    + "\n".join(f"  - {u}" for u in login_walled_pages)
+                )
+
             self._emit(f"正在清洗与分块 ({index}/{len(source_urls)})...")
             chunks = self._prepare_chunks(pages, config.chunk_size)
             if not chunks:
@@ -284,6 +296,8 @@ class WebInfo2MDPipeline:
                     continue
                 if parsed.netloc != start_host:
                     continue
+                if self._should_skip_link(normalized):
+                    continue
                 if normalized not in visited:
                     queue.append((normalized, current_depth + 1))
         return results
@@ -379,6 +393,13 @@ class WebInfo2MDPipeline:
         }
 
     @staticmethod
+    def _is_login_walled(text: str) -> bool:
+        """Detect if page content is blocked by a login wall."""
+        lower = text.lower()
+        patterns = ["登录后查看", "请登录", "请先登录", "登录后继续", "sign in to continue", "login required"]
+        return any(p in lower for p in patterns)
+
+    @staticmethod
     def _is_interview_prompt(prompt: str) -> bool:
         """Check if the user prompt is interview-related."""
         keywords = ["面试", "八股", "interview", "问题", "答案", "背诵", "复习"]
@@ -387,6 +408,29 @@ class WebInfo2MDPipeline:
 
     def _normalize_question(self, question: str) -> str:
         return re.sub(r"\s+", "", question.strip().lower())
+
+    @staticmethod
+    def _should_skip_link(url: str) -> bool:
+        """Skip navigation, auth, and other non-content links."""
+        lower = url.lower()
+        skip_patterns = [
+            # Auth & user pages
+            "member.php", "mod=logging", "mod=register", "xregister",
+            "mod=guide", "mod=redirect",
+            "action=login", "action=logout", "action=register",
+            "/login", "/logout", "/register", "/signup", "/auth",
+            "space-uid-", "space-username-",
+            # Navigation & non-content
+            "misc.php", "ranklist", "faq.php", "search.php",
+            "javascript:", "mailto:",
+            "/search", "/home", "/settings", "/notifications",
+            "dsu_paulsign", "start.php", "plugin.php",
+            "/next/", "/tools/", "/learn.", "/app/",
+            # Static files
+            ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".zip",
+            ".css", ".js",
+        ]
+        return any(p in lower for p in skip_patterns)
 
     def _normalize_url(self, url: str) -> str:
         cleaned, _ = urldefrag(url)

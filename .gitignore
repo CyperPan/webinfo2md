@@ -7,3 +7,6 @@ dist/
 build/
 .DS_Store
 output/
+*_profile/
+debug_*.png
+cookies.json

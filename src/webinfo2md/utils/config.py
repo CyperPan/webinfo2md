@@ -107,12 +107,14 @@ class PlaywrightConfig(BaseModel):
     scroll_pause_ms: int = 1500
     wait_until: Literal["networkidle", "domcontentloaded", "selector"] = "networkidle"
     wait_selector: str | None = None
-    wait_timeout_ms: int = 20000
+    wait_timeout_ms: int = 30000
     cookie_file: Path | None = None
     screenshot_path: Path | None = None
     user_agent: str | None = None
     viewport_width: int = 1440
     viewport_height: int = 1024
+    user_data_dir: Path | None = None
+    intercept_api: bool = False
 
     @model_validator(mode="after")
     def validate_options(self) -> "PlaywrightConfig":
@@ -155,6 +157,8 @@ def merge_playwright_config(
     cookie_file: Path | None = None,
     enable_scroll: bool | None = None,
     screenshot_path: Path | None = None,
+    user_data_dir: Path | None = None,
+    intercept_api: bool | None = None,
 ) -> PlaywrightConfig | None:
     payload: dict[str, Any] = {}
     if base is not None:
@@ -165,6 +169,10 @@ def merge_playwright_config(
         payload["enable_scroll"] = enable_scroll
     if screenshot_path is not None:
         payload["screenshot_path"] = screenshot_path
+    if user_data_dir is not None:
+        payload["user_data_dir"] = user_data_dir
+    if intercept_api is not None:
+        payload["intercept_api"] = intercept_api
     if not payload:
         return None
     return PlaywrightConfig.model_validate(payload)

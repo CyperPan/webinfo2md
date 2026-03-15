@@ -229,6 +229,21 @@ def _build_output_path(
     type=click.Path(path_type=Path, dir_okay=False),
     help="Save a Playwright screenshot for debugging.",
 )
+@click.option(
+    "--user-data-dir",
+    type=click.Path(path_type=Path, file_okay=False),
+    help="Persistent browser profile directory (preserves login state across runs).",
+)
+@click.option(
+    "--no-headless",
+    is_flag=True,
+    help="Show browser window (useful for manual login with --user-data-dir).",
+)
+@click.option(
+    "--intercept-api",
+    is_flag=True,
+    help="Intercept API responses for structured data (useful for SPAs like xiaohongshu).",
+)
 @click.option("--dry-run", is_flag=True, help="Crawl and chunk only, skipping all LLM calls.")
 @click.option("--verbose", is_flag=True, help="Enable verbose logging.")
 @click.option("--interactive", is_flag=True, help="Run in interactive mode.")
@@ -252,6 +267,9 @@ def main(
     cookie_file: Path | None,
     scroll: bool | None,
     screenshot: Path | None,
+    user_data_dir: Path | None,
+    no_headless: bool,
+    intercept_api: bool,
     dry_run: bool,
     verbose: bool,
     interactive: bool,
@@ -286,7 +304,19 @@ def main(
         cookie_file=cookie_file,
         enable_scroll=scroll,
         screenshot_path=screenshot,
+        user_data_dir=user_data_dir,
+        intercept_api=intercept_api if intercept_api else None,
     )
+    # Handle --no-headless flag
+    if no_headless:
+        if playwright_config is None:
+            from webinfo2md.utils.config import PlaywrightConfig as _PC
+            playwright_config = _PC(headless=False)
+        else:
+            playwright_config = playwright_config.model_copy(update={"headless": False})
+    # --user-data-dir implies --force-playwright
+    if user_data_dir:
+        force_playwright = True
 
     if interactive and url_list:
         raise click.ClickException("'--interactive' does not support '--url-list'.")

@@ -13,6 +13,9 @@
 - 多 URL 合并：多个网页的内容合并到一个文档中
 - 输出格式优化：元数据表格、目录、分类分组、总结表
 - 支持深度爬取、Cookie 登录、无限滚动等高级功能
+- 反检测与 stealth 模式：集成 playwright-stealth，应对反爬机制
+- 登录墙检测：自动识别需要登录的页面，给出明确提示
+- 持久化浏览器登录：首次手动扫码登录后自动保持会话状态
 
 ## 环境要求
 
@@ -116,9 +119,11 @@ force_playwright: false
 playwright:
   enable_scroll: false
   wait_until: networkidle
-  wait_timeout_ms: 20000
+  wait_timeout_ms: 30000
   # cookie_file: ~/.webinfo2md/cookies.json
   # screenshot_path: ./debug.png
+  # user_data_dir: ~/.webinfo2md/browser_profile
+  # intercept_api: false
 ```
 
 ## 使用教程
@@ -205,6 +210,39 @@ webinfo2md \
   --cookie-file ~/.webinfo2md/cookies.json
 ```
 
+**需要登录的网站（一亩三分地、小红书等）：**
+
+```bash
+# 首次运行：打开浏览器窗口，手动扫码或输入账号登录
+webinfo2md \
+  --url "https://www.xiaohongshu.com/search_result?keyword=ai+infra面经" \
+  --user-data-dir ./browser_profile \
+  --no-headless \
+  --force-playwright \
+  --provider openai \
+  --dry-run
+
+# 后续运行：自动复用保存的登录状态（可用 headless 模式）
+webinfo2md \
+  --url "https://www.xiaohongshu.com/search_result?keyword=ai+infra面经" \
+  --user-data-dir ./browser_profile \
+  --force-playwright \
+  --scroll \
+  --provider openai \
+  --prompt "提取AI Infra相关的面试问题和面经"
+```
+
+**论坛深度爬取（一亩三分地面经版）：**
+
+```bash
+webinfo2md \
+  --url "https://www.1point3acres.com/bbs/forum-145-1.html" \
+  --depth 1 \
+  --pages 10 \
+  --provider openai \
+  --prompt "提取所有AI Infra、ML Infra相关的面试问题和面经信息"
+```
+
 **预览模式（不调用 LLM）：**
 
 ```bash
@@ -237,6 +275,9 @@ webinfo2md \
 | `--cookie-file` | Playwright Cookie 文件 | - |
 | `--scroll` / `--no-scroll` | 是否无限滚动 | `false` |
 | `--screenshot` | 保存调试截图 | - |
+| `--user-data-dir` | 持久化浏览器目录（保存登录状态） | - |
+| `--no-headless` | 显示浏览器窗口（用于手动登录） | `false` |
+| `--intercept-api` | 拦截 API 响应获取结构化数据 | `false` |
 | `--dry-run` | 仅爬取分块，不调用 LLM | `false` |
 | `--verbose` | 详细日志 | `false` |
 | `--interactive` | 交互式模式 | `false` |
@@ -294,6 +335,97 @@ webinfo2md \
 ```
 
 面试场景的输出会包含更多分类（如 Hadoop、Spark、Flink 等），每个问题带有简短回答、详细解答、追问预测和关键词标签。
+
+## 网站兼容性测试
+
+以下是在主流中文内容平台上的测试结果（2026-03-14）：
+
+### 一亩三分地 (1point3acres.com)
+
+| 测试项 | 结果 |
+|--------|------|
+| 论坛分区页 (gid=38) | ✅ 无需登录，可正常爬取 |
+| 面经子版块 (forum-145) | ✅ 无需登录，可获取帖子标题和元信息 |
+| 帖子详情页 | ⚠️ 部分内容可见（标题、公司、岗位、面试类型），正文需积分/登录 |
+| 搜索功能 | ❌ 需要登录 |
+| 深度爬取 (depth=1) | ✅ 可跟踪链接进入子页面 |
+
+**测试命令：**
+
+```bash
+# 预览模式 — 检查爬取效果
+webinfo2md \
+  --url "https://www.1point3acres.com/bbs/forum-145-1.html" \
+  --depth 1 --pages 5 \
+  --provider openai --dry-run
+# 结果：5 pages, 24 chunks, 18005 tokens
+
+# 完整运行 — 生成面经整理文档
+webinfo2md \
+  --url "https://www.1point3acres.com/bbs/forum-145-1.html" \
+  --depth 1 --pages 10 \
+  --provider openai \
+  --prompt "提取所有AI Infra、ML Infra、分布式系统相关的面试问题和面经信息" \
+  --output output/1p3a-ai-infra-mianjing.md
+# 结果：22 chunks, 7 questions extracted, 结构化 Markdown 输出
+```
+
+**建议**：使用 `--user-data-dir --no-headless` 登录后可获取完整帖子内容，显著提升提取质量。
+
+### 小红书 (xiaohongshu.com)
+
+| 测试项 | 结果 |
+|--------|------|
+| 搜索页面 | ❌ 需要登录（显示占位骨架） |
+| 探索页面 | ❌ 反爬限制（IP 风险检测） |
+| 笔记详情页 | ❌ 需要登录 |
+| Stealth 模式 | ✅ 可绕过 IP 风险检测 |
+| 登录墙检测 | ✅ 自动识别并给出明确提示 |
+
+**小红书使用方式（需要登录）：**
+
+```bash
+# 步骤 1：首次运行，打开浏览器手动登录（扫码或手机号）
+webinfo2md \
+  --url "https://www.xiaohongshu.com/search_result?keyword=ai+infra面经" \
+  --user-data-dir ./xhs_profile \
+  --no-headless \
+  --force-playwright \
+  --provider openai --dry-run
+
+# 检测到登录墙后，工具会自动等待你在浏览器中完成登录
+# 登录成功后会自动继续爬取
+
+# 步骤 2：后续运行，复用登录态
+webinfo2md \
+  --url "https://www.xiaohongshu.com/search_result?keyword=ai+infra面经" \
+  --user-data-dir ./xhs_profile \
+  --force-playwright \
+  --scroll \
+  --provider openai \
+  --prompt "提取AI Infra相关的面试问题和经验分享"
+```
+
+### 需要登录的网站通用方案
+
+| 方案 | 适用场景 | 使用方式 |
+|------|----------|----------|
+| **持久化浏览器** | 扫码登录的网站（小红书、微信等） | `--user-data-dir ./profile --no-headless` |
+| **Cookie 文件** | 可从浏览器导出 Cookie 的网站 | `--cookie-file cookies.json` |
+| **API 拦截** | SPA 应用，内容通过 API 加载 | `--intercept-api` |
+
+**Cookie 文件格式**（从浏览器 DevTools 导出）：
+
+```json
+[
+  {
+    "name": "session_id",
+    "value": "xxx",
+    "domain": ".example.com",
+    "path": "/"
+  }
+]
+```
 
 ## 工作原理
 
